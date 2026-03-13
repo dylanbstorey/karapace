@@ -5,6 +5,7 @@ See LICENSE for details
 
 import asyncio
 import httpx
+import os
 import time
 import csv
 from statistics import mean
@@ -15,8 +16,8 @@ FILE_NAME = "karapace5_benchmarks.csv"
 NUM_TOPICS = 100
 TOPIC_PREFIX = "test-topic-json"
 TOPICS = [f"{TOPIC_PREFIX}-{i}" for i in range(NUM_TOPICS)]
-BASE_URL = "http://localhost:8082"
-SCHEMA_REGISTRY_URL = "http://localhost:8081"
+BASE_URL = os.environ.get("REST_PROXY_URL", "http://localhost:8082")
+SCHEMA_REGISTRY_URL = os.environ.get("SCHEMA_REGISTRY_URL", "http://localhost:8081")
 N_MESSAGES = 50000  # Total messages to produce (distributed across all topics)
 BATCH_SIZE = 1000  # Number of messages per request
 TIMEOUT = 10.0  # HTTP timeout (seconds)
@@ -109,6 +110,28 @@ async def register_schemas():
         print(f"✅ Registered/verified schemas for {registered}/{len(TOPICS)} topics")
 
 
+async def wait_for_ready():
+    """Wait for schema registry and REST proxy to be ready."""
+    endpoints = [
+        (SCHEMA_REGISTRY_URL, "Schema registry"),
+        (BASE_URL, "REST proxy"),
+    ]
+    async with httpx.AsyncClient(timeout=5) as client:
+        for url, name in endpoints:
+            for attempt in range(30):
+                try:
+                    r = await client.get(f"{url}/_health")
+                    if r.status_code == 200:
+                        print(f"{name} ready (attempt {attempt + 1})")
+                        break
+                except Exception:
+                    pass
+                await asyncio.sleep(2)
+            else:
+                raise RuntimeError(f"{name} not ready after 60s")
+
+
 if __name__ == "__main__":
+    asyncio.run(wait_for_ready())
     asyncio.run(register_schemas())
     asyncio.run(run_benchmark())

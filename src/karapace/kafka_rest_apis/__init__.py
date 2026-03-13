@@ -1037,13 +1037,20 @@ class UserRestProxy:
         value_schema_id: int | None,
         default_partition: int | None = None,
     ) -> list[tuple]:
+        # Pre-resolve schemas once for the entire batch instead of per-message
+        schema_cache: dict[int, tuple] = {}
+        if ser_format in {"avro", "jsonschema", "protobuf"}:
+            for sid in (key_schema_id, value_schema_id):
+                if sid is not None and sid not in schema_cache:
+                    schema_cache[sid] = await self.serializer.get_schema_for_id(sid)
+
         prepared_records = []
         for record in data["records"]:
             key = record.get("key")
             value = record.get("value")
             if key is not None:
-                key = await self.serialize(content_type, key, ser_format, key_schema_id)
-            value = await self.serialize(content_type, value, ser_format, value_schema_id)
+                key = await self._serialize_with_cache(content_type, key, ser_format, key_schema_id, schema_cache)
+            value = await self._serialize_with_cache(content_type, value, ser_format, value_schema_id, schema_cache)
             prepared_records.append((key, value, record.get("partition", default_partition)))
         return prepared_records
 
@@ -1116,6 +1123,21 @@ class UserRestProxy:
         schema, _ = await self.serializer.get_schema_for_id(schema_id)
         bytes_ = await self.serializer.serialize(schema, obj)
         return bytes_
+
+    async def _serialize_with_cache(
+        self,
+        content_type: str,
+        obj=None,
+        ser_format: str | None = None,
+        schema_id: int | None = None,
+        schema_cache: dict[int, tuple] | None = None,
+    ) -> bytes:
+        if not obj:
+            return b""
+        if ser_format in {"avro", "jsonschema", "protobuf"} and schema_cache is not None and schema_id is not None:
+            schema, _ = schema_cache[schema_id]
+            return await self.serializer.serialize(schema, obj)
+        return await self.serialize(content_type, obj, ser_format, schema_id)
 
     async def validate_publish_request_format(self, data: dict, formats: dict, content_type: str, topic: str):
         # this method will do in place updates for binary embedded formats, because the validation itself

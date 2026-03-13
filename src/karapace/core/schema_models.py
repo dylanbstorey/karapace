@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from avro.errors import SchemaParseException
 from avro.name import Names as AvroNames
-from avro.schema import make_avsc_object, parse as avro_parse, Schema as AvroSchema
+from avro.schema import make_avsc_object, Schema as AvroSchema
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from jsonschema import Draft7Validator
@@ -44,9 +44,12 @@ def parse_avro_schema_definition(s: str, validate_enum_symbols: bool = True, val
     The Python stdlib `json` module doesn't allow to ignore trailing data. If
     parsing fails because of it, the extra data can be removed and parsed
     again.
+
+    Uses make_avsc_object() directly to avoid the double JSON decode/encode
+    round-trip that avro_parse() would perform internally.
     """
     json_data = json_decode(s)
-    return avro_parse(json_encode(json_data), validate_enum_symbols=validate_enum_symbols, validate_names=validate_names)
+    return make_avsc_object(json_data, validate_enum_symbols=validate_enum_symbols, validate_names=validate_names)
 
 
 def parse_jsonschema_definition(schema_definition: str) -> Draft7Validator:

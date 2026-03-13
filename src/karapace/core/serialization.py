@@ -474,14 +474,17 @@ def read_value(config: Config, schema: TypedSchema, bio: io.BytesIO):
 
 def write_value(config: Config, schema: TypedSchema, bio: io.BytesIO, value: dict) -> None:
     if schema.schema_type is SchemaType.AVRO:
-        # Backwards compatibility: Support JSON encoded data without the tags for unions.
-        if avro.io.validate(schema.schema, value):
-            data = value
-        else:
-            data = flatten_unions(schema.schema, value)
-
+        # Try writing directly first (fast path), fall back to flattening unions
+        # for backwards compatibility with JSON encoded data without union tags.
         writer = DatumWriter(writers_schema=schema.schema)
-        writer.write(data, BinaryEncoder(bio))
+        pos = bio.tell()
+        try:
+            writer.write(value, BinaryEncoder(bio))
+        except avro.errors.AvroTypeException:
+            bio.seek(pos)
+            bio.truncate()
+            data = flatten_unions(schema.schema, value)
+            writer.write(data, BinaryEncoder(bio))
     elif schema.schema_type is SchemaType.JSONSCHEMA:
         try:
             schema.schema.validate(value)

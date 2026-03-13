@@ -153,6 +153,41 @@ integration-tests-in-docker: start-karapace-docker-resources
 	$(KARAPACE_CLI) $(PYTHON) -m pytest -s -vvv $(PYTEST_ARGS) tests/integration/
 	rm -fr runtime/*
 
+.PHONY: benchmark-schema-registration
+benchmark-schema-registration: start-karapace-docker-resources
+	sleep 10
+	$(DOCKER_COMPOSE) -f container/compose.yml --profile benchmark up -d --build --wait karapace-bench-registry
+	sleep 5
+	$(DOCKER_COMPOSE) -f container/compose.yml --profile benchmark run --rm -e BENCHMARK_SCRIPT=benchmark_schema_registration.py benchmark-runner
+
+.PHONY: benchmark-create-topics
+benchmark-create-topics:
+	$(DOCKER_COMPOSE) -f container/compose.yml exec kafka bash -c '\
+		for i in $$(seq 0 99); do \
+			/opt/kafka/bin/kafka-topics.sh --create --if-not-exists \
+				--topic test-topic-avro-$$i --partitions 3 --replication-factor 1 \
+				--bootstrap-server kafka:29092 2>/dev/null; \
+			/opt/kafka/bin/kafka-topics.sh --create --if-not-exists \
+				--topic test-topic-json-$$i --partitions 3 --replication-factor 1 \
+				--bootstrap-server kafka:29092 2>/dev/null; \
+		done && echo "Created 200 benchmark topics"'
+
+.PHONY: benchmark-produce-avro
+benchmark-produce-avro: start-karapace-docker-resources
+	sleep 10
+	$(DOCKER_COMPOSE) -f container/compose.yml --profile benchmark up -d --build --wait karapace-bench-registry karapace-bench-rest-proxy
+	sleep 5
+	$(MAKE) benchmark-create-topics
+	$(DOCKER_COMPOSE) -f container/compose.yml --profile benchmark run --rm -e BENCHMARK_SCRIPT=benchmark_produce_avro.py benchmark-runner
+
+.PHONY: benchmark-produce-json
+benchmark-produce-json: start-karapace-docker-resources
+	sleep 10
+	$(DOCKER_COMPOSE) -f container/compose.yml --profile benchmark up -d --build --wait karapace-bench-registry karapace-bench-rest-proxy
+	sleep 5
+	$(MAKE) benchmark-create-topics
+	$(DOCKER_COMPOSE) -f container/compose.yml --profile benchmark run --rm -e BENCHMARK_SCRIPT=benchmark_produce.py benchmark-runner
+
 .PHONY: type-check-mypy-in-docker
 type-check-mypy-in-docker: start-karapace-docker-resources
 	$(KARAPACE_CLI) $(PYTHON) -m mypy src/karapace

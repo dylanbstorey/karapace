@@ -76,6 +76,11 @@ class KarapaceSchemaRegistry:
         self.schema_lock = asyncio.Lock()
         self._master_lock = asyncio.Lock()
 
+        # Caches for avoiding redundant schema parsing and compatibility checks.
+        # Schemas are immutable once written, so these never go stale.
+        self._parsed_schema_cache: dict[str, ParsedTypedSchema] = {}
+        self._compat_cache: dict[tuple[str, str, str], SchemaCompatibilityResult] = {}
+
     def subjects_list(self, include_deleted: bool = False) -> list[Subject]:
         return self.database.find_subjects(include_deleted=include_deleted)
 
@@ -293,13 +298,20 @@ class KarapaceSchemaRegistry:
         return []
 
     def resolve_and_parse(self, schema: TypedSchema) -> ParsedTypedSchema:
+        cache_key = schema.fingerprint()
+        cached = self._parsed_schema_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         references, dependencies = self.resolve_references(schema.references) if schema.references else (None, None)
-        return ParsedTypedSchema.parse(
+        parsed = ParsedTypedSchema.parse(
             schema_type=schema.schema_type,
             schema_str=schema.schema_str,
             references=references,
             dependencies=dependencies,
         )
+        self._parsed_schema_cache[cache_key] = parsed
+        return parsed
 
     async def write_new_schema_local(
         self,
@@ -481,13 +493,22 @@ class KarapaceSchemaRegistry:
             old_versions = [live_versions[-1]]
 
         for old_version in old_versions:
-            old_parsed_schema = self.resolve_and_parse(all_schema_versions[old_version].schema)
+            old_schema = all_schema_versions[old_version].schema
+            compat_key = (old_schema.fingerprint(), new_schema.fingerprint(), compatibility_mode.value)
+            cached_result = self._compat_cache.get(compat_key)
+            if cached_result is not None:
+                if is_incompatible(cached_result):
+                    return cached_result
+                result = cached_result
+                continue
 
+            old_parsed_schema = self.resolve_and_parse(old_schema)
             result = SchemaCompatibility.check_compatibility(
                 old_schema=old_parsed_schema,
                 new_schema=new_schema,
                 compatibility_mode=compatibility_mode,
             )
+            self._compat_cache[compat_key] = result
 
             if is_incompatible(result):
                 return result

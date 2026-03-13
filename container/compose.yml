@@ -316,6 +316,90 @@ services:
     ports:
       - "8383:8080"
 
+  karapace-bench-registry:
+    networks:
+      - karapace
+    image: ghcr.io/aiven-open/karapace:develop
+    hostname: karapace-bench-registry
+    container_name: karapace-bench-registry
+    entrypoint:
+      - python3
+      - -m
+      - karapace
+    depends_on:
+      - kafka
+    ports:
+      - 8091:8091
+    environment:
+      KARAPACE_KARAPACE_REGISTRY: true
+      KARAPACE_ADVERTISED_HOSTNAME: karapace-bench-registry
+      KARAPACE_ADVERTISED_PROTOCOL: http
+      KARAPACE_BOOTSTRAP_URI: kafka:29092
+      KARAPACE_PORT: 8091
+      KARAPACE_HOST: 0.0.0.0
+      KARAPACE_CLIENT_ID: karapace-bench-registry
+      KARAPACE_GROUP_ID: karapace-bench-registry
+      KARAPACE_MASTER_ELECTION_STRATEGY: highest
+      KARAPACE_MASTER_ELIGIBILITY: true
+      KARAPACE_TOPIC_NAME: _schemas_bench
+      KARAPACE_LOG_LEVEL: WARNING
+      KARAPACE_COMPATIBILITY: FULL
+      KARAPACE_KAFKA_SCHEMA_READER_STRICT_MODE: false
+      KARAPACE_KAFKA_RETRIABLE_ERRORS_SILENCED: true
+    profiles:
+      - benchmark
+
+  karapace-bench-rest-proxy:
+    networks:
+      - karapace
+    image: ghcr.io/aiven-open/karapace:develop
+    hostname: karapace-bench-rest-proxy
+    container_name: karapace-bench-rest-proxy
+    entrypoint:
+      - python3
+      - -m
+      - karapace.kafka_rest_apis
+    depends_on:
+      - kafka
+      - karapace-bench-registry
+    ports:
+      - 8092:8092
+    environment:
+      KARAPACE_KARAPACE_REST: true
+      KARAPACE_PORT: 8092
+      KARAPACE_HOST: 0.0.0.0
+      KARAPACE_ADVERTISED_HOSTNAME: karapace-bench-rest-proxy
+      KARAPACE_ADVERTISED_PROTOCOL: http
+      KARAPACE_BOOTSTRAP_URI: kafka:29092
+      KARAPACE_REGISTRY_SCHEME: http
+      KARAPACE_REGISTRY_HOST: karapace-bench-registry
+      KARAPACE_REGISTRY_PORT: 8091
+      KARAPACE_ADMIN_METADATA_MAX_AGE: 0
+      KARAPACE_LOG_LEVEL: WARNING
+      KARAPACE_KAFKA_SCHEMA_READER_STRICT_MODE: false
+      KARAPACE_KAFKA_RETRIABLE_ERRORS_SILENCED: true
+    profiles:
+      - benchmark
+
+  benchmark-runner:
+    networks:
+      - karapace
+    image: python:${PYTHON_VERSION}-slim
+    hostname: benchmark-runner
+    container_name: benchmark-runner
+    working_dir: /benchmarks
+    depends_on:
+      - karapace-bench-registry
+      - karapace-bench-rest-proxy
+    volumes:
+      - ../benchmarks:/benchmarks
+    environment:
+      SCHEMA_REGISTRY_URL: http://karapace-bench-registry:8091
+      REST_PROXY_URL: http://karapace-bench-rest-proxy:8092
+    entrypoint: ["sh", "-c", "pip install httpx && exec python3 $$BENCHMARK_SCRIPT"]
+    profiles:
+      - benchmark
+
 networks:
   karapace:
     name: karapace_network
